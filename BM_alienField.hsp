@@ -1,0 +1,377 @@
+// ALIEN FIELD HSP.
+#define GAME_TITLE "ALIEN FIELD HSP BMedition. (Nov.28.2018)"
+#define SCREEN_WIDTH	38
+#define	SCREEN_HEIGHT	22
+#define global PITCH	18
+
+#define MAX_ALIEN	100	// エイリアンの最大数
+#define MAX_ENERGY	20	// エネルギーポインター描画数
+#define MAX_BLOCK	32	// ブロック描画数
+#define	FIRST_ALIEN	4	// 最初のエイリアンの数
+#define	global	STAGE_ALIEN	20	// ステージ中で倒さなければいけないエイリアンの数
+
+#define global	CHAR_NONE	0
+#define global	CHAR_PLAYER	1
+#define global	CHAR_ALIEN	2
+#define global	CHAR_BLOCK	3
+#define global	CHAR_ENERGY	4
+#define global	CHAR_DOT	5
+#define global	CHAR_BLANK	6
+
+#define KEYBIT_LEFT		1
+#define KEYBIT_UP		2
+#define KEYBIT_RIGHT	4
+#define KEYBIT_DOWN		8
+#define KEYBIT_SPACE	16
+#define KEYBIT_ESC		128
+
+#define	ALIEN_ALIVE	0
+#define	ALIEN_RESPAWN	1
+#define	ALIEN_WAITINGTIMER	10
+
+#define GAME_PLAYING	1
+#define GAME_GAOEOVER	2
+
+#define	MAX_FUTURE	10
+#define	RULEFEATURE_ALIEN_FERAL		6
+
+#include	"mod_joystick.as"
+
+*init
+	randomize
+	dim rule, MAX_FUTURE
+	
+	title GAME_TITLE
+	mode = GAME_PLAYING
+	cwx = SCREEN_WIDTH: cwy = SCREEN_HEIGHT: wx = PITCH*(cwx+2): wy = PITCH*(cwy+4)
+	realwx=wx*2: realwy=wy*2: xoffset = 1: yoffset = 2: scmode = 1
+	screen 0, realwx, realwy:width wx, wy: buffer 2,wx,wy
+
+	mmload dir_tv + "\\se_aaa.wav", 0		// ブロック登場
+	mmload dir_tv + "\\se_click.wav", 1		// エネルギーポインターゲット
+	mmload dir_tv + "\\se_block2.wav", 3	// スタート
+	mmload dir_tv + "\\se_break2.wav", 4	// 移動
+	mmload dir_tv + "\\se_tyuiin.wav", 9	// クリア
+	mmload dir_tv + "\\se_jump.wav", 10		// プレイヤーがやられた
+	mmload dir_tv + "\\se_jump2.wav", 11	// エイリアンを食べた
+
+	rule(RULEFEATURE_ALIEN_FERAL) = 0
+
+// -----------------------------------------------------------------------------
+// タイトル
+*titleInit
+	color 0, 0, 0:boxf
+	
+*titleLoop
+	color 255, 255, 255
+	pos 10, 10:mes GAME_TITLE
+	pos 10, 200:mes "PUSH [SPACE] to START"
+
+*titleMain
+	stick kKey: jstick joyKey: key = kKey | joyKey
+	if (key & KEYBIT_SPACE) { goto *scinit }
+
+	gameCnt++
+	gosub *update_frame: await 100: goto *titleLoop
+	
+// -----------------------------------------------------------------------------
+*scinit
+	speed = 200: score = 0: scene = 1: fighter = 3: alienNum = FIRST_ALIEN
+
+*scset
+	dim scr, cwx, cwy
+	dim alienx, MAX_ALIEN: dim alieny, MAX_ALIEN
+	dim alienStat, MAX_ALIEN: dim alienTimer, MAX_ALIEN
+	dim energyx, MAX_ENERGY: dim energyy, MAX_ENERGY
+	
+	game = GAME_PLAYING
+	energyNum = MAX_ENERGY: energy = 50: alienEat = 0: power = 10
+	
+	// フィールド描画
+	color 255, 255, 255:boxf
+	drawScore score, fighter, energy, alienEat, alienNum, gameCnt, score
+	y = 0
+	repeat cwy
+		x = 0
+		repeat cwx
+			drawChar x, y, CHAR_DOT, 0, 255, 255, 1
+			x += 1
+		loop
+		y += 1
+	loop
+
+	// ブロックの位置設定
+	repeat MAX_BLOCK
+		if (rnd(2) = 0) { drawVline rnd(cwx), rnd(cwy), rnd(16)+1 }
+		else { drawHline rnd(cwx), rnd(cwy), rnd(16)+1 }
+		mmplay 0
+		gosub *update_frame
+		await 80
+	loop
+
+	// エネルギーポインターの位置設定
+	repeat energyNum
+		x = rnd(cwx): y = rnd(cwy): energyx(cnt) = x: energyy(cnt) = y
+		drawChar x, y, CHAR_ENERGY, 255, 255, 0, 1
+	loop
+	gosub *update_frame
+	
+	// エイリアンの位置設定
+	repeat alienNum
+		x = rnd(cwx): y = rnd(cwy):alienx(cnt) = x: alieny(cnt) = y
+		alienStat(cnt) = ALIEN_ALIVE: alienTimer(cnt) = 0
+		drawChar x, y, CHAR_ALIEN, 255, 0, 0, 1
+	loop
+
+	// プレイヤーの位置設定
+	px = rnd(cwx): py = rnd(cwy)
+
+*start
+	gameCnt = 0
+	mmplay 3
+	repeat 256
+		drawChar px, py, CHAR_PLAYER, rnd(256), rnd(256), rnd(256), 1
+		gosub *update_frame: await 4
+	loop
+
+// -----------------------------------------------------------------------------
+// メインルーチン
+*main
+	stick kKey, (KEYBIT_UP|KEYBIT_DOWN|KEYBIT_RIGHT|KEYBIT_LEFT), 1
+	jstick joyKey: key = kKey | joyKey
+	if (key & KEYBIT_ESC) { goto *quit }
+	if (game = GAME_GAMEOVER) {
+		if (key & KEYBIT_SPACE) { goto *scinit }
+		goto *endofmain
+	}
+	
+	// プレイヤーの移動
+	tx = px: ty = py
+	drawChar px, py, CHAR_PLAYER, 0, 0, 0, 0
+	if (key & KEYBIT_UP) { ty -= 1 } else {
+		if (key & KEYBIT_DOWN) { ty += 1 } else {
+			if (key & KEYBIT_RIGHT) { tx += 1 } else {
+				if (key & KEYBIT_LEFT) { tx -= 1 }
+			}
+		}
+	}
+	if (tx >= cwx) { tx = cwx-1 }: if (ty >= cwy) { ty = cwy-1 }
+	if (tx < 0) { tx = 0 }: if (ty < 0) { ty = 0 }
+	if ((scr(tx, ty) != CHAR_BLOCK) || (power > 0)) {	// そっちへ進めるか？
+		px = tx: py = ty
+	}
+	if (scr(px, py) = CHAR_DOT) {	// ドットがあるか？
+		mmplay 4
+		score += 10
+	}
+	if ((energy > 0) || (power > 0)) {
+		drawChar px, py, CHAR_PLAYER, rnd(256), rnd(256), rnd(256), 1
+	} else {
+		drawChar px, py, CHAR_PLAYER, 0, 255, 0, 1
+	}
+
+	// エイリアンの移動
+	repeat alienNum
+		if (alienStat(cnt) != ALIEN_ALIVE) { continue }
+//		if (alienTimer(cnt) = 0 & (gameCnt \ 2 = 1)) { continue }
+
+		drawChar alienx(cnt), alieny(cnt), CHAR_BLANK, 0, 0, 0, 1
+		tx = alienx(cnt): ty = alieny(cnt)
+		if (tx > px) { tx -= 1 }: if (tx < px) { tx += 1 }
+		if (ty > py) { ty -= 1 }: if (ty < py) { ty += 1 }
+		if (scr(tx, ty) = CHAR_BLOCK) {
+			if ((rnd(10) = 0) | alienTimer(cnt) > 0) {	// ブロックの破壊
+				alienx(cnt) = tx: alieny(cnt) = ty
+			}
+		} else {
+			alienx(cnt) = tx: alieny(cnt) = ty
+		}
+		if (alienTimer(cnt) > 0) {
+			drawChar alienx(cnt), alieny(cnt), CHAR_ALIEN, 255, 255, 0, 1
+		} else {
+			drawChar alienx(cnt), alieny(cnt), CHAR_ALIEN, 255, 0, 0, 1
+		}
+	loop
+
+	// エネルギーポインターとの当たり判定
+	repeat energyNum
+		if (energyx(cnt) = px & energyy(cnt) = py) {
+			score += 20: energy += 100: energyx(cnt) = -1: energyy(cnt) = -1
+			mmplay 1
+		}
+	loop
+
+	// エイリアンとの当たり判定
+	j = 0
+	repeat alienNum
+		if (alienStat(cnt) = ALIEN_ALIVE) {
+			if (alienx(cnt) = px & alieny(cnt) = py) {
+				if (energy > 0) {
+					if (alienTimer(cnt) > 0) { score += 500 }
+					else { score += 100 }
+					alienEat++
+					drawScore score, fighter, energy, alienEat, alienNum, gameCnt, score
+					mmplay 11
+					drawChar alienx(cnt), alieny(cnt), CHAR_BLANK, 0, 0, 0, 1
+					alienx(cnt) = rnd(cwx): alieny(cnt) = rnd(cwy)
+					alienStat(cnt) = ALIEN_RESPAWN: alienTimer(cnt) = ALIEN_WAITINGTIMER
+ 
+					if (alienEat >= STAGE_ALIEN) {
+						scene++: score += 100
+						alienNum++:if (alienNum > MAX_ALIEN) { alienNum = MAX_ALIEN }
+						speed -= 10:if (speed < 0) { speed = 0 }
+						mmplay 9
+						gosub *update_frame: await 1000: goto *scset	// 次の面へ
+					}
+					j++:continue
+				} else {
+					fighter--
+					mmplay 10
+					repeat 256
+						drawChar px, py, CHAR_PLAYER, 255-cnt, 0, 0, 1
+						gosub *update_frame: await 8
+					loop
+					if (fighter <= 0) {
+						game = GAME_GAMEOVER: goto *main
+					}
+					goto *scset
+				}
+			}
+			if (alienTimer(cnt) > 0) {
+				alienTimer(cnt) -= 1
+			} else {
+				alienTimer(cnt) = 0
+			}
+			i = 0
+			repeat energyNum
+				if (energyx(i) = -1) { i++: continue }
+				if (energyx(i) = alienx(j) & energyy(i) = alieny(j)) {
+					if (rule(RULEFEATURE_ALIEN_FERAL) = 1) {	// もしエイリアン凶暴化モードなら
+						alienTimer(j) += 20
+						mmplay 1
+					}
+					energyx(i) = -1: energyy(i) = -1
+				}
+				i++
+			loop
+		}
+		if (alienStat(cnt) = ALIEN_RESPAWN) {
+			if (alienTimer(cnt) > 0) {	// エイリアン休み中
+				alienTimer(cnt) -= 1
+				if (gameCnt \ 2 = 0) {
+					drawChar alienx(cnt), alieny(cnt), CHAR_ALIEN, 0, 0, 255, 1
+				} else {
+					drawChar alienx(cnt), alieny(cnt), CHAR_ALIEN, 0, 0, 0, 1
+				}
+			}
+			if (alienTimer(cnt) <= 0) {
+				alienStat(cnt) = ALIEN_ALIVE: alienTimer(cnt) = 0
+			}
+		}
+		j++
+	loop
+
+*endofmain
+	// エネルギーポインター描画
+	ct = gameCnt
+	repeat energyNum
+		if (energyx(cnt) = -1) { continue }
+		if (ct \ 10 = 0) {
+			drawChar energyx(cnt), energyy(cnt), CHAR_ENERGY, 0, 0, 0, 1
+		} else { drawChar energyx(cnt), energyy(cnt), CHAR_ENERGY, 255, 255, 0, 1 }
+	loop	
+	drawScore score, fighter, energy, alienEat, alienNum, gameCnt
+
+	if (energy > 0) { energy -= 5 }
+	if (power > 0) { power-- }
+	// 次のフレームへ
+	gameCnt++
+	gosub *update_frame: await speed
+	goto *main
+
+*quit
+	end
+
+;	仮想画面から実際の画面に変倍コピーする
+*update_frame
+	gsel 0
+	getkey key, 49: if ((key = 1) && (scmode != 1)) { scmode = 1: width wx, wy }
+	getkey key, 50: if ((key = 1) && (scmode != 2)) { scmode = 2: width realwx, realwy }
+	if (scmode = 1) { gzoom wx,wy,2,0,0,wx,wy,0 }
+	if (scmode = 2) { gzoom realwx,realwy,2,0,0,wx,wy,0 }
+	gsel 2
+	return
+// -----------------------------------------------------------------------------
+// サブルーチン
+#module
+#deffunc	drawVline int x1, int y1, int len
+	l = len: x = x1+xoffset@: y = y1+yoffset@
+	if (y1+len >= cwy@)	{ l = cwy@ - y1 - 1 }
+	x2=x1:y2=y1
+	color 255, 255, 255: boxf x*PITCH, y*PITCH, x*PITCH+PITCH-1, (y+l-1)*PITCH+PITCH-1
+	repeat l
+		setChar x2, y2, CHAR_BLOCK
+		y2++
+	loop
+	return
+#global
+#module
+#deffunc	drawHline int x1, int y1, int len
+	l = len: x = x1+xoffset@: y = y1+yoffset@
+	if (x1+len >= cwx@)	{ l = cwx@ - x1 - 1 }
+	x2=x1:y2=y1
+	color 255, 255, 255: boxf x*PITCH, y*PITCH, (x+l-1)*PITCH+PITCH-1, y*PITCH+PITCH-1
+	repeat l
+		setChar x2, y2, CHAR_BLOCK:x2++
+	loop
+	return
+#global
+#module
+#deffunc	setChar int x, int y, int item
+	if (cwx@ <= x) { return }: if (cwy@ <= y) { return }
+	scr@(x, y) = item
+	return
+#global
+#module
+#deffunc	drawChar int x, int y, int item, int col1, int col2, int col3, int flg
+	if (flg = 1) {
+		color 0, 0, 0
+		boxf (x+xoffset@)*PITCH, (y+yoffset@)*PITCH, (x+xoffset@)*PITCH+PITCH-1, (y+yoffset@)*PITCH+PITCH-1
+	}
+	color col1, col2, col3: pos (x+xoffset@)*PITCH, (y+yoffset@)*PITCH
+	switch item
+	case CHAR_PLAYER: mes "★":setChar x, y, CHAR_BLANK:swbreak
+	case CHAR_ALIEN: mes "◆":setChar x, y, CHAR_BLANK:swbreak
+	case CHAR_BLOCK: mes "■":setChar x, y, item:swbreak
+	case CHAR_ENERGY: mes "●":setChar x, y, CHAR_BLANK:swbreak
+	case CHAR_DOT: mes "＋":setChar x, y, item:swbreak
+	case CHAR_BLANK: mes "　":setChar x, y, item:swbreak
+	default: swbreak
+	swend
+	return
+#global
+// 得点などの表示
+#module
+#deffunc drawScore int score, int fighter, int energy, int alienEat, int alienNum, int ct, int scene
+	color 0, 0, 0:boxf 1*PITCH, 0*PITCH, (1+8)*PITCH, 0*PITCH+PITCH-1
+	color 255, 255, 255:pos 1*PITCH, 0*PITCH:mes "SCORE:"+strf("%10d", score)
+	color 0, 0, 0:boxf 35*PITCH, 0*PITCH, (36+10)*PITCH, 0*PITCH+PITCH-1
+	color 255, 255, 255:pos 35*PITCH, 0*PITCH:mes "FIGHTER: "+fighter
+	color 0, 0, 0:boxf 1*PITCH, (cwy@+3)*PITCH, (1+9)*PITCH, (cwy@+3)*PITCH+PITCH-1
+	color 255, 255, 255:pos 1*PITCH, (cwy@+3)*PITCH:mes "ENERGY:"
+	en = energy / 10:if (en > 5) { en = 5 }
+	if (en > 0) {
+		color 0, 255, 0:boxf 5*PITCH, (cwy@+3)*PITCH, (5+en)*PITCH, (cwy@+3)*PITCH+PITCH-1
+	}
+	color 0, 0, 0:boxf 20*PITCH, (cwy@+3)*PITCH, (20+5)*PITCH, (cwy@+3)*PITCH+PITCH-1
+	color 255, 255, 255:pos 20*PITCH, (cwy@+3)*PITCH:mes "ALIEN: "+strf("%2d", STAGE_ALIEN - alienEat)
+	color 0, 0, 0:boxf 35*PITCH, (cwy@+3)* PITCH, (32+10)*PITCH, (cwy@+3)*PITCH+PITCH-1
+	color 255, 255, 255:pos 35*PITCH, (cwy@+3)*PITCH:mes "ROUND:"+strf("%3d", scene@)
+	if (fighter <= 0) {
+		color 0, 0, 0:boxf 35*PITCH, 0*PITCH, (35+5)*PITCH, 0*PITCH+PITCH-1
+		if (ct \ 2 = 0) {
+			color 255, 0, 0:pos 35*PITCH, 0*PITCH:mes "GAME  OVER"
+		}
+	}
+	return
+#global
